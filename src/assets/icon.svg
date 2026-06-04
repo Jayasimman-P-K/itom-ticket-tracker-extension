@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1a1f2e"/>
+      <stop offset="100%" style="stop-color:#0d1117"/>
+    </linearGradient>
+    <linearGradient id="hex-fill" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1e3a5f"/>
+      <stop offset="100%" style="stop-color:#0f2440"/>
+    </linearGradient>
+    <linearGradient id="top-face" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#4da8da"/>
+      <stop offset="100%" style="stop-color:#2980b9"/>
+    </linearGradient>
+    <linearGradient id="left-face" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#1a5276"/>
+      <stop offset="100%" style="stop-color:#2471a3"/>
+    </linearGradient>
+    <linearGradient id="right-face" x1="100%" y1="0%" x2="0%" y2="0%">
+      <stop offset="0%" style="stop-color:#1b4f72"/>
+      <stop offset="100%" style="stop-color:#2e86c1"/>
+    </linearGradient>
+  </defs>
+  <!-- Background -->
+  <rect width="128" height="128" rx="20" ry="20" fill="url(#bg)"/>
+  <!-- Outer hexagon -->
+  <polygon points="64,16 108,38 108,90 64,112 20,90 20,38" fill="url(#hex-fill)" stroke="#2e86c1" stroke-width="1.5" opacity="0.9"/>
+  <!-- Inner 3D cube - top face -->
+  <polygon points="64,36 88,50 64,64 40,50" fill="url(#top-face)"/>
+  <!-- Inner 3D cube - left face -->
+  <polygon points="40,50 64,64 64,88 40,74" fill="url(#left-face)"/>
+  <!-- Inner 3D cube - right face -->
+  <polygon points="88,50 64,64 64,88 88,74" fill="url(#right-face)"/>
+  <!-- Highlight edges -->
+  <line x1="64" y1="36" x2="88" y2="50" stroke="#5dade2" stroke-width="0.8" opacity="0.6"/>
+  <line x1="64" y1="36" x2="40" y2="50" stroke="#5dade2" stroke-width="0.8" opacity="0.6"/>
+  <line x1="64" y1="64" x2="64" y2="88" stroke="#1a5276" stroke-width="0.5" opacity="0.5"/>
+</svg>

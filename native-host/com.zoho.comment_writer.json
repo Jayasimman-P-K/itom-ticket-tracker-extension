@@ -1,0 +1,9 @@
+{
+    "path":  "D:\\Project\\Ticket tracker\\native-host\\host.bat",
+    "description":  "Writes captured Zoho Desk comments to local txt files",
+    "name":  "com.zoho.comment_writer",
+    "allowed_origins":  [
+                            "chrome-extension://meoghpppjfihbhniakljooklpoiogidb/"
+                        ],
+    "type":  "stdio"
+}

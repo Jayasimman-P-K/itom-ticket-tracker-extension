@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Zoho Desk Comment Tracker - Architecture Diagram</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #fff;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 40px 20px;
+    }
+
+    h1 {
+      color: #2e86ab;
+      font-size: 1.6rem;
+      font-weight: 500;
+      margin-bottom: 50px;
+      letter-spacing: 0.5px;
+    }
+
+    .diagram {
+      position: relative;
+      width: 1100px;
+      height: 620px;
+    }
+
+    /* --- Nodes --- */
+    .node {
+      position: absolute;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      font-weight: 600;
+      font-size: 0.85rem;
+      line-height: 1.3;
+    }
+
+    /* Rounded rectangle */
+    .node-rect {
+      padding: 24px 28px;
+      border-radius: 14px;
+      border: 3px solid;
+      background: repeating-linear-gradient(
+        135deg,
+        transparent,
+        transparent 4px,
+        rgba(255,255,255,0.4) 4px,
+        rgba(255,255,255,0.4) 6px
+      );
+    }
+
+    /* Diamond shape */
+    .node-diamond {
+      width: 150px;
+      height: 150px;
+      transform: rotate(45deg);
+      border: 3px solid;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .node-diamond .diamond-content {
+      transform: rotate(-45deg);
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+
+    /* Circle */
+    .node-circle {
+      width: 100px;
+      height: 100px;
+      border-radius: 50%;
+      border: 2.5px solid;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: repeating-linear-gradient(
+        135deg,
+        transparent,
+        transparent 3px,
+        rgba(255,255,255,0.3) 3px,
+        rgba(255,255,255,0.3) 5px
+      );
+    }
+
+    /* Small pill inside a node */
+    .sub-node {
+      margin-top: 8px;
+      padding: 4px 12px;
+      border-radius: 20px;
+      border: 2px solid;
+      font-size: 0.7rem;
+      font-weight: 500;
+      background: rgba(255,255,255,0.7);
+    }
+
+    /* --- Colors --- */
+    .color-blue { border-color: #2196F3; color: #1565C0; background-color: rgba(33,150,243,0.08); }
+    .color-green { border-color: #4CAF50; color: #2E7D32; background-color: rgba(76,175,80,0.08); }
+    .color-orange { border-color: #FF9800; color: #E65100; background-color: rgba(255,152,0,0.08); }
+    .color-red { border-color: #F44336; color: #C62828; background-color: rgba(244,67,54,0.08); }
+    .color-purple { border-color: #9C27B0; color: #6A1B9A; background-color: rgba(156,39,176,0.08); }
+    .color-teal { border-color: #009688; color: #00695C; background-color: rgba(0,150,136,0.08); }
+
+    /* --- Arrows (SVG overlay) --- */
+    .arrows {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+
+    .arrow-line {
+      stroke-width: 2.5;
+      fill: none;
+    }
+
+    .arrow-head {
+      stroke-width: 1.5;
+    }
+
+    /* --- Labels on arrows --- */
+    .arrow-label {
+      position: absolute;
+      font-size: 0.7rem;
+      font-weight: 500;
+      white-space: nowrap;
+      padding: 2px 8px;
+      border-radius: 4px;
+      background: rgba(255,255,255,0.9);
+    }
+
+    .label-blue { color: #1565C0; }
+    .label-green { color: #2E7D32; }
+    .label-orange { color: #E65100; }
+    .label-purple { color: #6A1B9A; }
+    .label-teal { color: #00695C; }
+    .label-red { color: #C62828; }
+
+    /* --- Positioning --- */
+    .zoho-site    { left: 0; top: 50px; }
+    .injected     { left: 0; top: 280px; }
+    .content      { left: 280px; top: 280px; }
+    .background   { left: 530px; top: 200px; }
+    .native-host  { left: 810px; top: 200px; }
+    .storage      { left: 530px; top: 450px; }
+    .filesystem   { left: 870px; top: 420px; }
+    .popup        { left: 530px; top: 20px; }
+  </style>
+</head>
+<body>
+
+  <h1>Zoho Desk Comment Tracker — Extension Architecture</h1>
+
+  <div class="diagram">
+
+    <!-- SVG Arrows -->
+    <svg class="arrows" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="arrowBlue" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#2196F3"/>
+        </marker>
+        <marker id="arrowGreen" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#4CAF50"/>
+        </marker>
+        <marker id="arrowOrange" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#FF9800"/>
+        </marker>
+        <marker id="arrowPurple" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#9C27B0"/>
+        </marker>
+        <marker id="arrowTeal" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#009688"/>
+        </marker>
+        <marker id="arrowRed" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#F44336"/>
+        </marker>
+      </defs>
+
+      <!-- Zoho Site → Injected Script (fetch/XHR intercept) -->
+      <line x1="85" y1="130" x2="85" y2="270" class="arrow-line" stroke="#2196F3" marker-end="url(#arrowBlue)"/>
+
+      <!-- Injected → Content Script (postMessage) -->
+      <line x1="175" y1="310" x2="278" y2="310" class="arrow-line" stroke="#4CAF50" marker-end="url(#arrowGreen)"/>
+
+      <!-- Content → Background (chrome.runtime.sendMessage) -->
+      <line x1="430" y1="295" x2="528" y2="260" class="arrow-line" stroke="#FF9800" marker-end="url(#arrowOrange)"/>
+
+      <!-- Background → Native Host (Native Messaging) -->
+      <line x1="700" y1="250" x2="808" y2="250" class="arrow-line" stroke="#9C27B0" marker-end="url(#arrowPurple)"/>
+
+      <!-- Native Host → Filesystem (fs.write) -->
+      <line x1="890" y1="310" x2="910" y2="415" class="arrow-line" stroke="#F44336" marker-end="url(#arrowRed)"/>
+
+      <!-- Background → chrome.storage.local -->
+      <line x1="610" y1="320" x2="610" y2="440" class="arrow-line" stroke="#009688" marker-end="url(#arrowTeal)"/>
+
+      <!-- Popup ↔ Background (sendMessage) -->
+      <line x1="610" y1="105" x2="610" y2="195" class="arrow-line" stroke="#FF9800" marker-end="url(#arrowOrange)" stroke-dasharray="6,4"/>
+    </svg>
+
+    <!-- Arrow Labels -->
+    <div class="arrow-label label-blue" style="left: 90px; top: 190px;">API Intercept<br>(fetch/XHR patch)</div>
+    <div class="arrow-label label-green" style="left: 190px; top: 325px;">window.postMessage</div>
+    <div class="arrow-label label-orange" style="left: 410px; top: 255px;">chrome.runtime<br>.sendMessage</div>
+    <div class="arrow-label label-purple" style="left: 715px; top: 220px;">Native Messaging<br>(4-byte length + JSON)</div>
+    <div class="arrow-label label-red" style="left: 920px; top: 355px;">fs.writeFile</div>
+    <div class="arrow-label label-teal" style="left: 620px; top: 380px;">chrome.storage<br>.local</div>
+    <div class="arrow-label label-orange" style="left: 620px; top: 140px;">sendMessage<br>(queries/settings)</div>
+
+    <!-- Nodes -->
+
+    <!-- Zoho Desk Website -->
+    <div class="node zoho-site">
+      <div class="node-rect color-blue" style="min-width: 160px;">
+        <div style="font-size: 1.1rem;">🌐</div>
+        <div style="margin-top: 4px;">Zoho Desk<br>Website</div>
+        <div class="sub-node color-blue">desk.zoho.in</div>
+      </div>
+    </div>
+
+    <!-- Injected Script -->
+    <div class="node injected">
+      <div class="node-rect color-blue" style="min-width: 160px;">
+        <div style="font-size: 0.95rem;">📡</div>
+        <div style="margin-top: 4px;">Injected Script</div>
+        <div class="sub-node color-blue">MAIN world</div>
+      </div>
+    </div>
+
+    <!-- Content Script -->
+    <div class="node content">
+      <div class="node-rect color-green" style="min-width: 140px;">
+        <div style="font-size: 0.95rem;">🔗</div>
+        <div style="margin-top: 4px;">Content Script</div>
+        <div class="sub-node color-green">ISOLATED world</div>
+      </div>
+    </div>
+
+    <!-- Background Service Worker -->
+    <div class="node background">
+      <div class="node-diamond color-green" style="width: 170px; height: 170px;">
+        <div class="diamond-content">
+          <div style="font-size: 1rem;">⚙️</div>
+          Background<br>Service Worker
+        </div>
+      </div>
+    </div>
+
+    <!-- Native Messaging Host -->
+    <div class="node native-host">
+      <div class="node-rect color-purple" style="min-width: 150px;">
+        <div style="font-size: 0.95rem;">🖥️</div>
+        <div style="margin-top: 4px;">Native Host</div>
+        <div class="sub-node color-purple">Node.js (host.cjs)</div>
+      </div>
+    </div>
+
+    <!-- chrome.storage.local -->
+    <div class="node storage">
+      <div class="node-circle color-teal">
+        <div>chrome<br>.storage<br>.local</div>
+      </div>
+    </div>
+
+    <!-- Filesystem -->
+    <div class="node filesystem">
+      <div class="node-circle color-red" style="width: 120px; height: 120px;">
+        <div>📁 Local<br>Filesystem<br><span style="font-size: 0.65rem;">.md files</span></div>
+      </div>
+    </div>
+
+    <!-- Popup UI -->
+    <div class="node popup">
+      <div class="node-rect color-orange" style="min-width: 140px;">
+        <div style="font-size: 0.95rem;">🪟</div>
+        <div style="margin-top: 4px;">Popup UI</div>
+        <div class="sub-node color-orange">React (App.jsx)</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Legend -->
+  <div style="margin-top: 40px; padding: 20px 30px; border: 1px solid #e0e0e0; border-radius: 10px; max-width: 900px;">
+    <h3 style="color: #555; font-size: 0.9rem; margin-bottom: 12px;">Data Flow Summary</h3>
+    <ol style="color: #555; font-size: 0.8rem; line-height: 2; padding-left: 18px;">
+      <li><strong style="color:#1565C0;">Injected Script</strong> monkey-patches <code>fetch</code> &amp; <code>XHR</code> to intercept comment POST to <code>/supportapi/zd/.../tickets/{id}/comments</code></li>
+      <li>Captured comment sent to <strong style="color:#2E7D32;">Content Script</strong> via <code>window.postMessage</code> (cross-world bridge)</li>
+      <li>Content Script forwards to <strong style="color:#2E7D32;">Background Service Worker</strong> via <code>chrome.runtime.sendMessage</code></li>
+      <li>Background stores in <strong style="color:#00695C;">chrome.storage.local</strong> (deduplication, tagging, date-grouping)</li>
+      <li>Background sends to <strong style="color:#6A1B9A;">Native Host</strong> via Native Messaging (4-byte header protocol)</li>
+      <li>Native Host writes formatted <strong style="color:#C62828;">.md files</strong> to local filesystem (Year-Month/ hierarchy)</li>
+      <li><strong style="color:#E65100;">Popup UI</strong> queries Background for captured comments, settings, and tag management</li>
+    </ol>
+  </div>
+
+</body>
+</html>

@@ -1,0 +1,494 @@
+import React, { useState, useEffect } from 'react';
+import { AVAILABLE_TAGS } from '../shared/tags.js';
+
+function App() {
+  const [captures, setCaptures] = useState([]);
+  const [allCaptures, setAllCaptures] = useState({});
+  const [settings, setSettings] = useState({ savePath: '', liveWriting: true, theme: 'dark' });
+  const [status, setStatus] = useState('');
+  const [pathInput, setPathInput] = useState('');
+  const [activeTab, setActiveTab] = useState('commented');
+  const [tagModal, setTagModal] = useState(null);
+  const [showSettings, setShowSettings] = useState(false);
+  const [statFilter, setStatFilter] = useState('7days');
+  const [hoveredPoint, setHoveredPoint] = useState(null);
+
+  useEffect(() => {
+    chrome.runtime.sendMessage({ type: 'GET_CAPTURES' }, (data) => {
+      if (data) setCaptures(data);
+    });
+    chrome.runtime.sendMessage({ type: 'GET_ALL_CAPTURES' }, (data) => {
+      if (data) setAllCaptures(data);
+    });
+    chrome.runtime.sendMessage({ type: 'GET_SETTINGS' }, (data) => {
+      if (data) {
+        const filtered = {};
+        Object.keys(data).forEach(k => { if (data[k] !== undefined) filtered[k] = data[k]; });
+        setSettings(prev => ({ ...prev, ...filtered }));
+        if (filtered.savePath) setPathInput(filtered.savePath);
+      }
+    });
+
+    // Live update when storage changes (new comment captured)
+    const onStorageChange = (changes) => {
+      if (changes.captures) {
+        const allData = changes.captures.newValue || {};
+        setAllCaptures(allData);
+        const now = new Date();
+        const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        setCaptures(allData[todayKey] || []);
+      }
+    };
+    chrome.storage.onChanged.addListener(onStorageChange);
+    return () => chrome.storage.onChanged.removeListener(onStorageChange);
+  }, []);
+
+  useEffect(() => {
+    document.body.setAttribute('data-theme', settings.theme || 'dark');
+  }, [settings.theme]);
+
+  const savePath = () => {
+    chrome.runtime.sendMessage({ type: 'SET_SAVE_PATH', path: pathInput }, (res) => {
+      if (res?.success) {
+        setSettings(prev => ({ ...prev, savePath: pathInput }));
+        showStatus('Path saved');
+      } else {
+        showStatus(res?.error || 'Failed to save path', true);
+      }
+    });
+  };
+
+  const toggleLiveWriting = (checked) => {
+    const updated = { ...settings, liveWriting: checked };
+    setSettings(updated);
+    chrome.runtime.sendMessage({ type: 'SAVE_SETTINGS', data: { liveWriting: checked } });
+  };
+
+  const toggleTheme = () => {
+    const newTheme = settings.theme === 'dark' ? 'light' : 'dark';
+    const updated = { ...settings, theme: newTheme };
+    setSettings(updated);
+    chrome.runtime.sendMessage({ type: 'SAVE_SETTINGS', data: { theme: newTheme } });
+  };
+
+  const deleteCapture = (captureId) => {
+    chrome.runtime.sendMessage({ type: 'DELETE_CAPTURE', commentId: captureId, dateKey: getDateKey() }, (res) => {
+      if (res?.success) {
+        setCaptures(prev => prev.filter(c => c.id !== captureId));
+      }
+    });
+  };
+
+  const showStatus = (msg, isError = false) => {
+    setStatus({ msg, isError });
+    setTimeout(() => setStatus(''), 3000);
+  };
+
+  const openTagModal = (capture) => {
+    setTagModal({
+      commentId: capture.id,
+      dateKey: getDateKey(),
+      tags: [...(capture.tags || [])]
+    });
+  };
+
+  const toggleTag = (tagId) => {
+    setTagModal(prev => {
+      const tags = prev.tags.includes(tagId)
+        ? prev.tags.filter(t => t !== tagId)
+        : [...prev.tags, tagId];
+      return { ...prev, tags };
+    });
+  };
+
+  const applyTags = () => {
+    chrome.runtime.sendMessage({
+      type: 'TAG_COMMENT',
+      commentId: tagModal.commentId,
+      dateKey: tagModal.dateKey,
+      tags: tagModal.tags
+    }, (res) => {
+      if (res?.success) {
+        setCaptures(prev => prev.map(c =>
+          c.id === tagModal.commentId ? { ...c, tags: tagModal.tags } : c
+        ));
+        showStatus('Tags applied');
+      }
+      setTagModal(null);
+    });
+  };
+
+  const stripHtml = (html) => {
+    if (!html) return '';
+    return html.replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim();
+  };
+
+  const cleanPreview = (html) => {
+    const text = stripHtml(html);
+    if (!text) return '';
+    const lines = text.split(/\n/).filter(l => l.trim());
+    if (lines.length > 1 && /^(hi|hello|hey|dear|greetings|good\s*(morning|afternoon|evening))[,\s!]/i.test(lines[0].trim())) {
+      lines.shift();
+    }
+    if (lines.length > 0 && /^cc[:\s,]/i.test(lines[lines.length - 1].trim())) {
+      lines.pop();
+    }
+    return lines.join(' ').trim();
+  };
+
+  const todayFormatted = () => {
+    return new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+  };
+
+  const formatTime = (iso) => {
+    if (!iso) return '';
+    return new Date(iso).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+  };
+
+  const getDateKey = () => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+
+  // --- Graph data computation ---
+  const getGraphData = () => {
+    const now = new Date();
+    let days = 7;
+    if (statFilter === '1day') days = 1;
+    else if (statFilter === '7days') days = 7;
+    else if (statFilter === '1month') days = 30;
+
+    const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const points = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      // Use live captures for today, allCaptures for past days
+      const dayCaptures = key === todayKey ? captures : (allCaptures[key] || []);
+      points.push({
+        date: d,
+        label: d.toLocaleDateString('en-IN', { weekday: 'short' }),
+        value: dayCaptures.length
+      });
+    }
+    return points;
+  };
+
+  const renderGraph = () => {
+    const data = getGraphData();
+    if (data.length === 0) return null;
+
+    const maxVal = Math.max(...data.map(d => d.value), 1);
+    const w = 300;
+    const h = 120;
+    const padX = 10;
+    const padY = 15;
+    const graphW = w - padX * 2;
+    const graphH = h - padY * 2;
+
+    const points = data.map((d, i) => ({
+      x: padX + (i / (data.length - 1 || 1)) * graphW,
+      y: padY + graphH - (d.value / maxVal) * graphH
+    }));
+
+    const pathD = points.map((p, i) => {
+      if (i === 0) return `M ${p.x} ${p.y}`;
+      const prev = points[i - 1];
+      const cpx1 = prev.x + (p.x - prev.x) * 0.4;
+      const cpx2 = prev.x + (p.x - prev.x) * 0.6;
+      return `C ${cpx1} ${prev.y} ${cpx2} ${p.y} ${p.x} ${p.y}`;
+    }).join(' ');
+
+    const areaD = pathD + ` L ${points[points.length - 1].x} ${h - padY} L ${points[0].x} ${h - padY} Z`;
+
+    return (
+      <svg width="100%" viewBox={`0 0 ${w} ${h + 20}`} className="graph-svg" onMouseLeave={() => setHoveredPoint(null)}>
+        {/* Grid lines */}
+        {[0, 0.25, 0.5, 0.75, 1].map((pct, i) => (
+          <line key={i} x1={padX} x2={w - padX} y1={padY + graphH * (1 - pct)} y2={padY + graphH * (1 - pct)} stroke="var(--border)" strokeWidth="0.5" />
+        ))}
+        {/* Area fill */}
+        <path d={areaD} fill="url(#graphGradient)" />
+        {/* Line */}
+        <path d={pathD} fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" />
+        {/* Gradient definition */}
+        <defs>
+          <linearGradient id="graphGradient" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.3" />
+            <stop offset="100%" stopColor="var(--accent)" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        {/* Hover hit areas */}
+        {points.map((p, i) => (
+          <rect
+            key={`hit-${i}`}
+            x={p.x - (graphW / data.length) / 2}
+            y={0}
+            width={graphW / data.length}
+            height={h}
+            fill="transparent"
+            onMouseEnter={() => setHoveredPoint(i)}
+          />
+        ))}
+        {/* Labels */}
+        {data.length <= 7 && data.map((d, i) => (
+          <text key={i} x={points[i].x} y={h + 8} textAnchor="middle" fontSize="9" fill="var(--text-muted)">
+            {d.label}
+          </text>
+        ))}
+        {data.length > 7 && [0, Math.floor(data.length / 2), data.length - 1].map((idx) => (
+          <text key={idx} x={points[idx].x} y={h + 8} textAnchor="middle" fontSize="9" fill="var(--text-muted)">
+            {data[idx].date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
+          </text>
+        ))}
+        {/* Tooltip (rendered last = on top) */}
+        {hoveredPoint !== null && (
+          <g>
+            <line x1={points[hoveredPoint].x} x2={points[hoveredPoint].x} y1={padY} y2={h - padY} stroke="var(--accent)" strokeWidth="1" strokeDasharray="3,3" opacity="0.5" />
+            <circle cx={points[hoveredPoint].x} cy={points[hoveredPoint].y} r="5" fill="var(--accent)" stroke="var(--bg-primary)" strokeWidth="2" />
+            <rect x={points[hoveredPoint].x - 18} y={Math.max(2, points[hoveredPoint].y - 28)} width="36" height="20" rx="6" fill="var(--accent)" />
+            <text x={points[hoveredPoint].x} y={Math.max(15.5, points[hoveredPoint].y - 14.5)} textAnchor="middle" fontSize="11" fontWeight="700" fill="#fff">
+              {data[hoveredPoint].value}
+            </text>
+          </g>
+        )}
+      </svg>
+    );
+  };
+
+  // Tag stats from all captures in selected period
+  const getTagStats = () => {
+    const now = new Date();
+    let days = 7;
+    if (statFilter === '1day') days = 1;
+    else if (statFilter === '7days') days = 7;
+    else if (statFilter === '1month') days = 30;
+
+    let all = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      if (allCaptures[key]) all = all.concat(allCaptures[key]);
+    }
+
+    return AVAILABLE_TAGS.map(tag => ({
+      ...tag,
+      count: all.filter(c => c.tags && c.tags.includes(tag.id)).length
+    }));
+  };
+
+  return (
+    <div className="app">
+      {/* Header */}
+      <header className="header">
+        <div className="header-left">
+          <img src="/src/assets/icon48.png" alt="" className="header-icon" />
+          <span className="header-title">Comment Tracker</span>
+        </div>
+        <div className="header-right">
+          <div className={`live-dot ${settings.liveWriting ? 'active' : ''}`} title={settings.liveWriting ? 'Live writing ON' : 'Live writing OFF'} />
+          <button className="header-btn" onClick={toggleTheme} title={settings.theme === 'dark' ? 'Light mode' : 'Dark mode'}>
+            {settings.theme === 'dark' ? (
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+            ) : (
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
+            )}
+          </button>
+          <button className="header-btn" onClick={() => setShowSettings(!showSettings)} title="Settings">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+          </button>
+        </div>
+      </header>
+
+      {/* Stats Hero */}
+      <section className="hero">
+        {activeTab === 'commented' ? (
+          <div className="hero-commented">
+            <p className="hero-label">desk.zoho.in</p>
+            <h2 className="hero-count">{captures.length}</h2>
+            <p className="hero-sublabel">comments today &middot; {todayFormatted()}</p>
+          </div>
+        ) : (
+          <div className="hero-stats">
+            <div className="hero-graph-header">
+              <div>
+                <p className="hero-label">Activity</p>
+                <p className="hero-sublabel">{statFilter === '7days' ? 'Last 7 days' : 'Last 30 days'}</p>
+              </div>
+              <div className="filter-bar-mini">
+                <button className={`filter-btn-mini ${statFilter === '7days' ? 'filter-active' : ''}`} onClick={() => setStatFilter('7days')}>7D</button>
+                <button className={`filter-btn-mini ${statFilter === '1month' ? 'filter-active' : ''}`} onClick={() => setStatFilter('1month')}>1M</button>
+              </div>
+            </div>
+            <div className="graph-container">
+              {renderGraph()}
+            </div>
+          </div>
+        )}
+      </section>
+
+      {/* Status toast */}
+      {status && (
+        <div className={`toast ${status.isError ? 'toast-error' : ''}`}>
+          {status.msg}
+        </div>
+      )}
+
+      {/* Tab Toggle */}
+      <nav className="tab-bar">
+        <div className="tab-toggle">
+          <div className="tab-slider" style={{ transform: `translateX(${activeTab === 'commented' ? '0%' : '100%'})` }} />
+          <button className={`tab ${activeTab === 'commented' ? 'tab-active' : ''}`} onClick={() => setActiveTab('commented')}>
+            Commented
+          </button>
+          <button className={`tab ${activeTab === 'statistics' ? 'tab-active' : ''}`} onClick={() => setActiveTab('statistics')}>
+            Statistics
+          </button>
+        </div>
+      </nav>
+
+      {/* Tab Content */}
+      <div className="tab-content">
+        {activeTab === 'commented' && (
+          <div className="content-card">
+            {captures.length === 0 ? (
+              <p className="empty">No comments captured today.</p>
+            ) : (
+              <ul className="capture-list">
+                {[...captures].reverse().map((c, i) => (
+                  <li key={c.id || i} className="capture-item">
+                    <div className="capture-main">
+                      <a className="ticket-link" href={c.url} target="_blank" rel="noopener noreferrer" title={c.url}>
+                        {c.ticketTitle || (c.url ? c.url.replace(/^https?:\/\//, '').substring(0, 38) : 'Unknown ticket')}
+                      </a>
+                      <p className="capture-text">{cleanPreview(c.content).substring(0, 70)}</p>
+                      <div className="capture-tags">
+                        {(c.tags && c.tags.length > 0) ? c.tags.map(t => {
+                          const tag = AVAILABLE_TAGS.find(at => at.id === t);
+                          return <span key={t} className={`tag-badge tag-${t}`}>{tag?.label || t}</span>;
+                        }) : <span className="tag-badge tag-none">None</span>}
+                      </div>
+                    </div>
+                    <div className="capture-side">
+                      <span className="time">{formatTime(c.commentedTime || c.capturedAt)}</span>
+                      <div className="action-btns">
+                        <button className="action-btn action-tag" onClick={() => openTagModal(c)} title="Tag">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+                        </button>
+                        <button className="action-btn action-delete" onClick={() => deleteCapture(c.id)} title="Remove">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+                        </button>
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'statistics' && (
+          <div className="content-card">
+            {/* Tag Stats */}
+            <div className="tag-stats">
+              {getTagStats().map(tag => (
+                <div key={tag.id} className="stat-row">
+                  <span className="stat-label">{tag.label}</span>
+                  <span className="stat-value">{tag.count}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Settings Panel (overlay) */}
+      {showSettings && (
+        <div className="settings-overlay" onClick={() => setShowSettings(false)}>
+          <div className="settings-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="settings-header">
+              <h3>Settings</h3>
+              <button className="header-btn" onClick={() => setShowSettings(false)}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+
+            <label className="setting-label">Save Location</label>
+            <div className="path-row">
+              <input
+                type="text"
+                value={pathInput}
+                onChange={(e) => setPathInput(e.target.value)}
+                placeholder="C:\Users\...\Documents"
+              />
+              <button className="btn-primary" onClick={savePath}>Set</button>
+            </div>
+
+            <div className="setting-row">
+              <div>
+                <span className="setting-name">Live Writing</span>
+                <p className="setting-hint">Auto-save on every capture</p>
+              </div>
+              <label className="switch">
+                <input
+                  type="checkbox"
+                  checked={settings.liveWriting}
+                  onChange={(e) => toggleLiveWriting(e.target.checked)}
+                />
+                <span className="slider"></span>
+              </label>
+            </div>
+
+            <div className="setting-row">
+              <div>
+                <span className="setting-name">{settings.theme === 'dark' ? 'Light Mode' : 'Dark Mode'}</span>
+                <p className="setting-hint">{settings.theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}</p>
+              </div>
+              <label className="switch">
+                <input
+                  type="checkbox"
+                  checked={settings.theme === 'light'}
+                  onChange={toggleTheme}
+                />
+                <span className="slider"></span>
+              </label>
+            </div>
+
+            <div className="setting-info">
+              <span className="setting-label">Output Folder</span>
+              <p className="setting-path">{settings.savePath || 'Not configured'}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Tag Modal */}
+      {tagModal && (
+        <div className="modal-overlay" onClick={() => setTagModal(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Tag Comment</h3>
+            <div className="tag-grid">
+              {AVAILABLE_TAGS.map(tag => (
+                <button
+                  key={tag.id}
+                  className={`tag-chip ${tagModal.tags.includes(tag.id) ? 'tag-selected' : ''}`}
+                  onClick={() => toggleTag(tag.id)}
+                >
+                  {tag.label}
+                </button>
+              ))}
+            </div>
+            <div className="modal-actions">
+              <button className="btn-cancel" onClick={() => setTagModal(null)}>Cancel</button>
+              <button className="btn-primary" onClick={applyTags}>Apply</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default App;
