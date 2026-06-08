@@ -7,89 +7,163 @@
 (function () {
   'use strict';
 
-  // Available tags (keep in sync with shared/tags.js)
-  const AVAILABLE_TAGS = [
-    { id: 'session_attended', label: 'Session Attended' },
-    { id: 'qppm_provided', label: 'QPPM Provided' },
-    { id: 'patch_provided', label: 'Patch Provided' },
-    { id: 'issue_fix_list', label: 'Issue Fix List' },
+  // Tag categories (keep in sync with shared/tags.js)
+  const TAG_CATEGORIES = [
+    {
+      id: 'logging',
+      label: 'Logging',
+      tags: [
+        { id: 'session_attended', label: 'Session Attended' },
+        { id: 'qppm_provided', label: 'QPPM Provided' },
+        { id: 'patch_provided', label: 'Patch Provided' },
+        { id: 'issue_fix_list', label: 'Issue Fix List' },
+      ]
+    },
+    {
+      id: 'tracking',
+      label: 'Tracking',
+      tags: [
+        { id: 'newly_assigned', label: 'Newly Assigned' },
+        { id: 'existing_tickets', label: 'Existing Tickets' },
+      ]
+    }
   ];
 
   // --- Toast UI ---
-  function injectToastStyles() {
-    if (document.getElementById('zd-tracker-toast-styles')) return;
+  function injectToastStyles(isDark) {
+    const existing = document.getElementById('zd-tracker-toast-styles');
+    if (existing) existing.remove();
+
     const style = document.createElement('style');
     style.id = 'zd-tracker-toast-styles';
     style.textContent = `
       .zd-tracker-toast {
         position: fixed;
-        bottom: 24px;
-        right: 24px;
+        top: 16px;
+        right: 16px;
         z-index: 2147483647;
-        background: #1e293b;
-        color: #f1f5f9;
+        background: ${isDark ? '#1a1a1a' : '#ffffff'};
+        color: ${isDark ? '#ffffff' : '#1f2937'};
         border-radius: 12px;
-        padding: 16px 20px;
-        box-shadow: 0 20px 60px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.05);
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        padding: 0;
+        box-shadow: ${isDark ? '0 8px 32px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.06)' : '0 8px 32px rgba(0,0,0,0.12), 0 0 0 1px rgba(0,0,0,0.05)'};
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         font-size: 13px;
-        max-width: 320px;
-        animation: zdToastSlideIn 0.3s ease;
+        width: 480px;
+        overflow: hidden;
+        animation: zdToastSlideIn 0.3s cubic-bezier(0.21, 1.02, 0.73, 1);
         transition: opacity 0.3s, transform 0.3s;
       }
       .zd-tracker-toast.hiding {
         opacity: 0;
-        transform: translateY(10px);
+        transform: translateX(100%);
       }
       @keyframes zdToastSlideIn {
-        from { opacity: 0; transform: translateY(20px); }
-        to { opacity: 1; transform: translateY(0); }
+        from { opacity: 0; transform: translateX(100%); }
+        to { opacity: 1; transform: translateX(0); }
+      }
+      .zd-tracker-toast-progress {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        height: 3px;
+        background: ${isDark ? '#67b26f' : '#4a9b55'};
+        border-radius: 0 0 0 12px;
+        animation: zdProgress 15s linear forwards;
+        animation-play-state: running;
+      }
+      .zd-tracker-toast:hover .zd-tracker-toast-progress {
+        animation-play-state: paused;
+      }
+      @keyframes zdProgress {
+        from { width: 100%; }
+        to { width: 0%; }
+      }
+      .zd-tracker-toast-body {
+        padding: 12px 16px 8px;
       }
       .zd-tracker-toast-header {
         display: flex;
         align-items: center;
-        gap: 8px;
-        margin-bottom: 10px;
+        gap: 10px;
+        margin-bottom: 6px;
       }
-      .zd-tracker-toast-header svg {
+      .zd-tracker-toast-icon {
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        background: ${isDark ? 'rgba(103,178,111,0.12)' : 'rgba(74,155,85,0.08)'};
+        display: flex;
+        align-items: center;
+        justify-content: center;
         flex-shrink: 0;
       }
       .zd-tracker-toast-title {
         font-weight: 600;
         font-size: 13px;
-        color: #10b981;
+        color: ${isDark ? '#ffffff' : '#111827'};
+        flex: 1;
+      }
+      .zd-tracker-toast-close {
+        background: none;
+        border: none;
+        color: ${isDark ? '#888' : '#9ca3af'};
+        cursor: pointer;
+        padding: 4px;
+        border-radius: 6px;
+        display: flex;
+        align-items: center;
+        transition: all 0.15s;
+      }
+      .zd-tracker-toast-close:hover {
+        background: ${isDark ? '#2a2a2a' : '#f3f4f6'};
+        color: ${isDark ? '#ccc' : '#374151'};
       }
       .zd-tracker-toast-subtitle {
-        font-size: 11px;
-        color: #94a3b8;
-        margin-bottom: 10px;
+        font-size: 12px;
+        color: ${isDark ? '#ccc' : '#6b7280'};
+        margin-bottom: 8px;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+        padding-left: 34px;
+      }
+      .zd-tracker-toast-category {
+        margin-bottom: 6px;
+        padding-left: 34px;
+      }
+      .zd-tracker-toast-category-label {
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: ${isDark ? '#888' : '#9ca3af'};
+        margin-bottom: 6px;
       }
       .zd-tracker-toast-tags {
         display: flex;
         flex-wrap: wrap;
         gap: 6px;
-        margin-bottom: 12px;
       }
       .zd-tracker-tag-btn {
-        padding: 5px 10px;
-        border-radius: 6px;
-        border: 1px solid #334155;
-        background: #0f172a;
-        color: #cbd5e1;
-        font-size: 11px;
+        padding: 5px 12px;
+        border-radius: 16px;
+        border: 1px solid ${isDark ? 'rgba(255,255,255,0.08)' : '#e5e7eb'};
+        background: ${isDark ? '#232323' : '#fff'};
+        color: ${isDark ? '#ccc' : '#4b5563'};
+        font-size: 12px;
+        font-weight: 500;
         cursor: pointer;
         transition: all 0.15s;
       }
       .zd-tracker-tag-btn:hover {
-        border-color: #10b981;
-        color: #10b981;
+        border-color: ${isDark ? '#67b26f' : '#4a9b55'};
+        color: ${isDark ? '#67b26f' : '#4a9b55'};
+        background: ${isDark ? 'rgba(103,178,111,0.12)' : 'rgba(74,155,85,0.08)'};
       }
       .zd-tracker-tag-btn.selected {
-        background: #10b981;
-        border-color: #10b981;
+        background: ${isDark ? '#67b26f' : '#4a9b55'};
+        border-color: ${isDark ? '#67b26f' : '#4a9b55'};
         color: #fff;
         font-weight: 600;
       }
@@ -97,10 +171,13 @@
         display: flex;
         gap: 8px;
         justify-content: flex-end;
+        padding: 8px 16px;
+        border-top: 1px solid ${isDark ? 'rgba(255,255,255,0.06)' : '#f3f4f6'};
+        background: ${isDark ? '#232323' : '#f9fafb'};
       }
       .zd-tracker-btn {
-        padding: 6px 14px;
-        border-radius: 6px;
+        padding: 7px 16px;
+        border-radius: 8px;
         font-size: 12px;
         font-weight: 500;
         cursor: pointer;
@@ -109,97 +186,153 @@
       }
       .zd-tracker-btn-skip {
         background: transparent;
-        color: #94a3b8;
+        color: ${isDark ? '#888' : '#6b7280'};
       }
       .zd-tracker-btn-skip:hover {
-        color: #f1f5f9;
+        background: ${isDark ? '#2a2a2a' : '#e5e7eb'};
+        color: ${isDark ? '#ccc' : '#374151'};
       }
       .zd-tracker-btn-apply {
-        background: #10b981;
+        background: ${isDark ? '#67b26f' : '#4a9b55'};
         color: #fff;
       }
       .zd-tracker-btn-apply:hover {
-        background: #059669;
+        background: ${isDark ? '#5a9e62' : '#3d8548'};
       }
     `;
     document.head.appendChild(style);
   }
 
   function showTagToast(commentData) {
-    injectToastStyles();
+    // Get theme and custom tags from extension storage
+    chrome.storage.local.get(['theme', 'customTags'], (settings) => {
+      const isDark = (settings.theme || 'dark') === 'dark';
+      const customTags = settings.customTags || [];
 
-    // Remove any existing toast
-    const existing = document.getElementById('zd-tracker-toast');
-    if (existing) existing.remove();
+      injectToastStyles(isDark);
 
-    const selectedTags = new Set();
+      // Remove any existing toast
+      const existing = document.getElementById('zd-tracker-toast');
+      if (existing) existing.remove();
 
-    const toast = document.createElement('div');
-    toast.id = 'zd-tracker-toast';
-    toast.className = 'zd-tracker-toast';
+      const selectedTags = new Set(['existing_tickets']);
 
-    const ticketTitle = commentData.ticketTitle || 'Ticket';
-    const shortTitle = ticketTitle.length > 40 ? ticketTitle.substring(0, 40) + '...' : ticketTitle;
+      // Build categories with custom tags merged in
+      const categories = TAG_CATEGORIES.map(cat => ({
+        ...cat,
+        tags: [...cat.tags, ...customTags.filter(ct => ct.category === cat.id)]
+      }));
 
-    toast.innerHTML = `
-      <div class="zd-tracker-toast-header">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-        <span class="zd-tracker-toast-title">Comment Captured</span>
-      </div>
-      <div class="zd-tracker-toast-subtitle" title="${ticketTitle}">${shortTitle}</div>
-      <div class="zd-tracker-toast-tags" id="zd-tracker-tag-list"></div>
-      <div class="zd-tracker-toast-actions">
-        <button class="zd-tracker-btn zd-tracker-btn-skip" id="zd-tracker-skip">Skip</button>
-        <button class="zd-tracker-btn zd-tracker-btn-apply" id="zd-tracker-apply">Apply Tags</button>
-      </div>
-    `;
+      const toast = document.createElement('div');
+      toast.id = 'zd-tracker-toast';
+      toast.className = 'zd-tracker-toast';
 
-    document.body.appendChild(toast);
+      const ticketTitle = commentData.ticketTitle || 'Ticket';
+      const shortTitle = ticketTitle.length > 45 ? ticketTitle.substring(0, 45) + '...' : ticketTitle;
 
-    // Render tag buttons
-    const tagList = document.getElementById('zd-tracker-tag-list');
-    AVAILABLE_TAGS.forEach(tag => {
-      const btn = document.createElement('button');
-      btn.className = 'zd-tracker-tag-btn';
-      btn.textContent = tag.label;
-      btn.dataset.tagId = tag.id;
-      btn.addEventListener('click', () => {
-        if (selectedTags.has(tag.id)) {
-          selectedTags.delete(tag.id);
-          btn.classList.remove('selected');
-        } else {
-          selectedTags.add(tag.id);
-          btn.classList.add('selected');
-        }
-      });
-      tagList.appendChild(btn);
-    });
+      toast.innerHTML = `
+        <div class="zd-tracker-toast-body">
+          <div class="zd-tracker-toast-header">
+            <div class="zd-tracker-toast-icon">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+            </div>
+            <span class="zd-tracker-toast-title">Comment Captured</span>
+            <button class="zd-tracker-toast-close" id="zd-tracker-close">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+          </div>
+          <div class="zd-tracker-toast-subtitle" title="${ticketTitle}">${shortTitle}</div>
+          <div id="zd-tracker-categories"></div>
+        </div>
+        <div class="zd-tracker-toast-actions">
+          <button class="zd-tracker-btn zd-tracker-btn-skip" id="zd-tracker-skip">Skip</button>
+          <button class="zd-tracker-btn zd-tracker-btn-apply" id="zd-tracker-apply">Apply Tags</button>
+        </div>
+        <div class="zd-tracker-toast-progress"></div>
+      `;
 
-    // Auto-dismiss after 15 seconds
-    let autoDismiss = setTimeout(() => dismissToast(), 15000);
+      document.body.appendChild(toast);
 
-    function dismissToast() {
-      clearTimeout(autoDismiss);
-      toast.classList.add('hiding');
-      setTimeout(() => toast.remove(), 300);
-    }
+      // Render categorized tag buttons
+      const catContainer = document.getElementById('zd-tracker-categories');
+      categories.forEach(cat => {
+        if (cat.tags.length === 0) return;
+        const section = document.createElement('div');
+        section.className = 'zd-tracker-toast-category';
+        section.innerHTML = `<div class="zd-tracker-toast-category-label">${cat.label}</div>`;
+        const tagRow = document.createElement('div');
+        tagRow.className = 'zd-tracker-toast-tags';
 
-    // Skip button
-    document.getElementById('zd-tracker-skip').addEventListener('click', dismissToast);
+        cat.tags.forEach(tag => {
+          const btn = document.createElement('button');
+          btn.className = 'zd-tracker-tag-btn';
+          if (selectedTags.has(tag.id)) btn.classList.add('selected');
+          btn.textContent = tag.label;
+          btn.dataset.tagId = tag.id;
+          btn.addEventListener('click', () => {
+            // Tracking tags are mutually exclusive
+            if (tag.id === 'newly_assigned' || tag.id === 'existing_tickets') {
+              const counterpart = tag.id === 'newly_assigned' ? 'existing_tickets' : 'newly_assigned';
+              selectedTags.delete(counterpart);
+              const counterpartBtn = tagRow.querySelector(`[data-tag-id="${counterpart}"]`);
+              if (counterpartBtn) counterpartBtn.classList.remove('selected');
+            }
 
-    // Apply button
-    document.getElementById('zd-tracker-apply').addEventListener('click', () => {
-      if (selectedTags.size > 0) {
-        const today = new Date();
-        const dateKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-        chrome.runtime.sendMessage({
-          type: 'TAG_COMMENT',
-          commentId: commentData.id,
-          dateKey: dateKey,
-          tags: Array.from(selectedTags)
+            if (selectedTags.has(tag.id)) {
+              selectedTags.delete(tag.id);
+              btn.classList.remove('selected');
+            } else {
+              selectedTags.add(tag.id);
+              btn.classList.add('selected');
+            }
+          });
+          tagRow.appendChild(btn);
         });
+
+        section.appendChild(tagRow);
+        catContainer.appendChild(section);
+      });
+
+      // Auto-dismiss after 15 seconds (pauses on hover)
+      let remaining = 15000;
+      let timerStart = Date.now();
+      let autoDismiss = setTimeout(() => dismissToast(), remaining);
+
+      toast.addEventListener('mouseenter', () => {
+        clearTimeout(autoDismiss);
+        remaining -= (Date.now() - timerStart);
+      });
+      toast.addEventListener('mouseleave', () => {
+        timerStart = Date.now();
+        autoDismiss = setTimeout(() => dismissToast(), remaining);
+      });
+
+      function dismissToast() {
+        clearTimeout(autoDismiss);
+        toast.classList.add('hiding');
+        setTimeout(() => toast.remove(), 300);
       }
-      dismissToast();
+
+      // Skip button
+      document.getElementById('zd-tracker-skip').addEventListener('click', dismissToast);
+
+      // Close button (X)
+      document.getElementById('zd-tracker-close').addEventListener('click', dismissToast);
+
+      // Apply button
+      document.getElementById('zd-tracker-apply').addEventListener('click', () => {
+        if (selectedTags.size > 0) {
+          const today = new Date();
+          const dateKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+          chrome.runtime.sendMessage({
+            type: 'TAG_COMMENT',
+            commentId: commentData.id,
+            dateKey: dateKey,
+            tags: Array.from(selectedTags)
+          });
+        }
+        dismissToast();
+      });
     });
   }
 

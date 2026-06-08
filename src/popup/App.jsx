@@ -1,17 +1,22 @@
 import React, { useState, useEffect } from 'react';
-import { AVAILABLE_TAGS } from '../shared/tags.js';
+import { toast, ToastContainer } from 'react-toastify';
+import { TAG_CATEGORIES, AVAILABLE_TAGS, getAllTags, getAllTagsFlat } from '../shared/tags.js';
 
 function App() {
   const [captures, setCaptures] = useState([]);
   const [allCaptures, setAllCaptures] = useState({});
   const [settings, setSettings] = useState({ savePath: '', liveWriting: true, theme: 'dark' });
-  const [status, setStatus] = useState('');
   const [pathInput, setPathInput] = useState('');
-  const [activeTab, setActiveTab] = useState('commented');
+  const [activeTab, setActiveTab] = useState('todo');
   const [tagModal, setTagModal] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
   const [statFilter, setStatFilter] = useState('7days');
   const [hoveredPoint, setHoveredPoint] = useState(null);
+  const [todos, setTodos] = useState([]);
+  const [todoInput, setTodoInput] = useState('');
+  const [customTags, setCustomTags] = useState([]);
+  const [showAddTag, setShowAddTag] = useState(null); // category id or null
+  const [tagStats, setTagStats] = useState({});
 
   useEffect(() => {
     chrome.runtime.sendMessage({ type: 'GET_CAPTURES' }, (data) => {
@@ -27,6 +32,15 @@ function App() {
         setSettings(prev => ({ ...prev, ...filtered }));
         if (filtered.savePath) setPathInput(filtered.savePath);
       }
+    });
+    chrome.runtime.sendMessage({ type: 'GET_TODOS' }, (data) => {
+      if (data) setTodos(data);
+    });
+    chrome.storage.local.get('customTags', (data) => {
+      if (data.customTags) setCustomTags(data.customTags);
+    });
+    chrome.runtime.sendMessage({ type: 'GET_TAG_STATS' }, (data) => {
+      if (data) setTagStats(data);
     });
 
     // Live update when storage changes (new comment captured)
@@ -80,8 +94,34 @@ function App() {
   };
 
   const showStatus = (msg, isError = false) => {
-    setStatus({ msg, isError });
-    setTimeout(() => setStatus(''), 3000);
+    if (isError) {
+      toast.error(msg);
+    } else {
+      toast.success(msg);
+    }
+  };
+
+  // --- Todo functions ---
+  const addTodo = () => {
+    const text = todoInput.trim();
+    if (!text) return;
+    const newTodo = { id: Date.now().toString(), text, done: false, createdAt: new Date().toISOString() };
+    const updated = [newTodo, ...todos];
+    setTodos(updated);
+    setTodoInput('');
+    chrome.runtime.sendMessage({ type: 'SAVE_TODOS', todos: updated });
+  };
+
+  const toggleTodo = (id) => {
+    const updated = todos.map(t => t.id === id ? { ...t, done: !t.done } : t);
+    setTodos(updated);
+    chrome.runtime.sendMessage({ type: 'SAVE_TODOS', todos: updated });
+  };
+
+  const deleteTodo = (id) => {
+    const updated = todos.filter(t => t.id !== id);
+    setTodos(updated);
+    chrome.runtime.sendMessage({ type: 'SAVE_TODOS', todos: updated });
   };
 
   const openTagModal = (capture) => {
@@ -94,9 +134,19 @@ function App() {
 
   const toggleTag = (tagId) => {
     setTagModal(prev => {
-      const tags = prev.tags.includes(tagId)
-        ? prev.tags.filter(t => t !== tagId)
-        : [...prev.tags, tagId];
+      let nextTags = [...prev.tags];
+
+      // Tracking tags are mutually exclusive
+      if (tagId === 'newly_assigned') {
+        nextTags = nextTags.filter(t => t !== 'existing_tickets');
+      }
+      if (tagId === 'existing_tickets') {
+        nextTags = nextTags.filter(t => t !== 'newly_assigned');
+      }
+
+      const tags = nextTags.includes(tagId)
+        ? nextTags.filter(t => t !== tagId)
+        : [...nextTags, tagId];
       return { ...prev, tags };
     });
   };
@@ -265,17 +315,44 @@ function App() {
     else if (statFilter === '7days') days = 7;
     else if (statFilter === '1month') days = 30;
 
-    let all = [];
+    // Counts from live captures still in storage
+    let liveCounts = {};
     for (let i = days - 1; i >= 0; i--) {
       const d = new Date(now);
       d.setDate(d.getDate() - i);
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-      if (allCaptures[key]) all = all.concat(allCaptures[key]);
+      if (allCaptures[key]) {
+        for (const c of allCaptures[key]) {
+          if (c.tags) {
+            for (const tag of c.tags) {
+              liveCounts[tag] = (liveCounts[tag] || 0) + 1;
+            }
+          }
+        }
+      }
     }
 
-    return AVAILABLE_TAGS.map(tag => ({
+    // For 1-month view, also merge persisted tagStats
+    let persistedCounts = {};
+    if (statFilter === '1month') {
+      const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      if (tagStats[monthKey]) {
+        persistedCounts = { ...tagStats[monthKey] };
+      }
+    }
+
+    // Order: Tracking first, then Logging
+    const orderedCategories = [...TAG_CATEGORIES].sort((a, b) => {
+      if (a.id === 'tracking') return -1;
+      if (b.id === 'tracking') return 1;
+      return 0;
+    });
+    const orderedTags = orderedCategories.flatMap(cat => cat.tags);
+    const allTags = [...orderedTags, ...customTags];
+
+    return allTags.map(tag => ({
       ...tag,
-      count: all.filter(c => c.tags && c.tags.includes(tag.id)).length
+      count: (liveCounts[tag.id] || 0) + (persistedCounts[tag.id] || 0)
     }));
   };
 
@@ -310,7 +387,7 @@ function App() {
             <h2 className="hero-count">{captures.length}</h2>
             <p className="hero-sublabel">comments today &middot; {todayFormatted()}</p>
           </div>
-        ) : (
+        ) : activeTab === 'statistics' ? (
           <div className="hero-stats">
             <div className="hero-graph-header">
               <div>
@@ -326,26 +403,30 @@ function App() {
               {renderGraph()}
             </div>
           </div>
+        ) : (
+          <div className="hero-commented">
+            <p className="hero-label">Tasks</p>
+            <h2 className="hero-count">{todos.filter(t => !t.done).length}</h2>
+            <p className="hero-sublabel">{todos.filter(t => t.done).length} completed &middot; {todos.length} total</p>
+          </div>
         )}
       </section>
 
-      {/* Status toast */}
-      {status && (
-        <div className={`toast ${status.isError ? 'toast-error' : ''}`}>
-          {status.msg}
-        </div>
-      )}
+
 
       {/* Tab Toggle */}
       <nav className="tab-bar">
-        <div className="tab-toggle">
-          <div className="tab-slider" style={{ transform: `translateX(${activeTab === 'commented' ? '0%' : '100%'})` }} />
+        <div className="tab-toggle tab-toggle-3">
+          <button className={`tab ${activeTab === 'todo' ? 'tab-active' : ''}`} onClick={() => setActiveTab('todo')}>
+            Todo
+          </button>
           <button className={`tab ${activeTab === 'commented' ? 'tab-active' : ''}`} onClick={() => setActiveTab('commented')}>
-            Commented
+            Comments
           </button>
           <button className={`tab ${activeTab === 'statistics' ? 'tab-active' : ''}`} onClick={() => setActiveTab('statistics')}>
             Statistics
           </button>
+          <div className="tab-slider" style={{ transform: `translateX(${activeTab === 'todo' ? '0%' : activeTab === 'commented' ? '100%' : '200%'})` }} />
         </div>
       </nav>
 
@@ -400,6 +481,45 @@ function App() {
                 </div>
               ))}
             </div>
+          </div>
+        )}
+
+        {activeTab === 'todo' && (
+          <div className="content-card todo-card">
+            <div className="todo-input-row">
+              <input
+                type="text"
+                className="todo-input"
+                placeholder="Write a task..."
+                value={todoInput}
+                onChange={(e) => setTodoInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') addTodo(); }}
+              />
+              <button className="todo-add-btn" onClick={addTodo} title="Add task">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              </button>
+            </div>
+            {todos.length === 0 ? (
+              <p className="empty">No tasks yet. Add one above.</p>
+            ) : (
+              <ul className="todo-list">
+                {todos.map((todo) => (
+                  <li key={todo.id} className={`todo-item ${todo.done ? 'todo-done' : ''}`}>
+                    <button className="todo-checkbox" onClick={() => toggleTodo(todo.id)}>
+                      {todo.done ? (
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                      ) : (
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/></svg>
+                      )}
+                    </button>
+                    <span className="todo-text">{todo.text}</span>
+                    <button className="todo-delete" onClick={() => deleteTodo(todo.id)} title="Delete">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         )}
       </div>
@@ -460,6 +580,65 @@ function App() {
               <span className="setting-label">Output Folder</span>
               <p className="setting-path">{settings.savePath || 'Not configured'}</p>
             </div>
+
+            <div className="setting-section">
+              <span className="setting-label">Data Retention</span>
+              <p className="setting-hint" style={{ marginBottom: '8px' }}>
+                Comment data is auto-cleared daily at 02:00 AM. Tag statistics are retained for 1 month.
+              </p>
+            </div>
+
+            <div className="setting-section">
+              <span className="setting-label">Custom Tags</span>
+              {TAG_CATEGORIES.map(cat => (
+                <div key={cat.id} className="custom-tags-category">
+                  <div className="tag-category-header">
+                    <span className="tag-category-label">{cat.label}</span>
+                    <button
+                      className="tag-add-btn"
+                      title={`Add tag to ${cat.label}`}
+                      onClick={() => setShowAddTag(showAddTag === cat.id ? null : cat.id)}
+                    >+</button>
+                  </div>
+                  {showAddTag === cat.id && (
+                    <form className="add-tag-form" onSubmit={(e) => {
+                      e.preventDefault();
+                      const input = e.target.elements.tagName;
+                      const label = input.value.trim();
+                      if (!label) return;
+                      const id = label.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+                      const newTag = { id, label, category: cat.id };
+                      const updated = [...customTags, newTag];
+                      setCustomTags(updated);
+                      chrome.storage.local.set({ customTags: updated });
+                      setShowAddTag(null);
+                    }}>
+                      <input name="tagName" placeholder="Tag name..." autoFocus className="add-tag-input" />
+                      <button type="submit" className="btn-primary btn-sm">Add</button>
+                    </form>
+                  )}
+                  <div className="custom-tags-list">
+                    {customTags.filter(ct => ct.category === cat.id).map(tag => (
+                      <div key={tag.id} className="custom-tag-item">
+                        <span>{tag.label}</span>
+                        <button
+                          className="custom-tag-delete"
+                          onClick={() => {
+                            const updated = customTags.filter(ct => ct.id !== tag.id);
+                            setCustomTags(updated);
+                            chrome.storage.local.set({ customTags: updated });
+                          }}
+                          title="Remove tag"
+                        >&times;</button>
+                      </div>
+                    ))}
+                    {customTags.filter(ct => ct.category === cat.id).length === 0 && (
+                      <p className="setting-hint">No custom tags</p>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}
@@ -469,17 +648,32 @@ function App() {
         <div className="modal-overlay" onClick={() => setTagModal(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h3>Tag Comment</h3>
-            <div className="tag-grid">
-              {AVAILABLE_TAGS.map(tag => (
-                <button
-                  key={tag.id}
-                  className={`tag-chip ${tagModal.tags.includes(tag.id) ? 'tag-selected' : ''}`}
-                  onClick={() => toggleTag(tag.id)}
-                >
-                  {tag.label}
-                </button>
-              ))}
-            </div>
+            {TAG_CATEGORIES.map(cat => {
+              const catTags = [...cat.tags, ...customTags.filter(ct => ct.category === cat.id)];
+              return (
+                <div key={cat.id} className="tag-category-section">
+                  <div className="tag-category-header">
+                    <span className="tag-category-label">{cat.label}</span>
+                  </div>
+                  <div className="tag-grid">
+                    {catTags.map(tag => (
+                      <button
+                        key={tag.id}
+                        className={`tag-chip ${tagModal.tags.includes(tag.id) ? 'tag-selected' : ''}`}
+                        style={tag.color ? {
+                          borderColor: tag.color,
+                          color: tagModal.tags.includes(tag.id) ? '#fff' : tag.color,
+                          background: tagModal.tags.includes(tag.id) ? tag.color : undefined
+                        } : undefined}
+                        onClick={() => toggleTag(tag.id)}
+                      >
+                        {tag.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
             <div className="modal-actions">
               <button className="btn-cancel" onClick={() => setTagModal(null)}>Cancel</button>
               <button className="btn-primary" onClick={applyTags}>Apply</button>
@@ -487,6 +681,16 @@ function App() {
           </div>
         </div>
       )}
+
+      <ToastContainer
+        position="top-right"
+        autoClose={3000}
+        hideProgressBar={false}
+        newestOnTop
+        closeOnClick
+        pauseOnHover
+        theme={settings.theme === 'light' ? 'light' : 'dark'}
+      />
     </div>
   );
 }

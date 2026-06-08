@@ -7,9 +7,14 @@
  * - Supports per-tag category files (Year-Month/Categories/)
  */
 
-import { AVAILABLE_TAGS, tagToFilename, tagLabel } from '../shared/tags.js';
+import { TAG_CATEGORIES, AVAILABLE_TAGS, tagToFilename, tagLabel } from '../shared/tags.js';
 
 const HOST_NAME = 'com.zoho.comment_writer';
+
+// Quick lookup: is this tag in the 'logging' category?
+const LOGGING_TAG_IDS = new Set(
+  TAG_CATEGORIES.find(c => c.id === 'logging')?.tags.map(t => t.id) || []
+);
 
 // --- On startup: reset badge if no captures today ---
 async function resetBadgeIfNewDay() {
@@ -29,12 +34,17 @@ async function resetBadgeIfNewDay() {
 
 // Run on service worker start
 resetBadgeIfNewDay();
+setupScheduledClear();
 
-// Also set up an alarm to reset at midnight
+// Also set up an alarm to reset badge
 chrome.alarms.create('badgeDayReset', { periodInMinutes: 1 });
+chrome.alarms.create('scheduledClear', { periodInMinutes: 1 });
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'badgeDayReset') {
     resetBadgeIfNewDay();
+  }
+  if (alarm.name === 'scheduledClear') {
+    checkScheduledClear();
   }
 });
 
@@ -88,7 +98,90 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     deleteCapture(message.commentId, message.dateKey).then(sendResponse);
     return true;
   }
+
+  // --- Todo handlers ---
+  if (message.type === 'GET_TODOS') {
+    chrome.storage.local.get('todos').then(s => sendResponse(s.todos || []));
+    return true;
+  }
+
+  if (message.type === 'SAVE_TODOS') {
+    chrome.storage.local.set({ todos: message.todos }).then(() => sendResponse({ success: true }));
+    return true;
+  }
+
+  if (message.type === 'CLEAR_ALL_DATA') {
+    clearAllData().then(sendResponse);
+    return true;
+  }
+
+  if (message.type === 'GET_TAG_STATS') {
+    chrome.storage.local.get('tagStats').then(s => sendResponse(s.tagStats || {}));
+    return true;
+  }
 });
+
+// --- Scheduled clear: check if it's time to purge captures ---
+async function setupScheduledClear() {
+  // Reserved for future expansion; default policy is fixed daily clear at 02:00 AM.
+}
+
+async function checkScheduledClear() {
+  const storage = await chrome.storage.local.get(['lastClearDate', 'captures', 'tagStats']);
+  const lastClear = storage.lastClearDate || '';
+
+  const now = new Date();
+  const schedH = 2;
+  const schedM = 0;
+  const todayKey = getDateKey();
+
+  // Check if current time has passed the scheduled time
+  if (now.getHours() < schedH || (now.getHours() === schedH && now.getMinutes() < schedM)) {
+    return; // Not time yet
+  }
+
+  // Fixed daily clear
+  const shouldClear = lastClear !== todayKey;
+
+  if (!shouldClear) return;
+
+  // Preserve tag stats before clearing
+  const captures = storage.captures || {};
+  const tagStats = storage.tagStats || {};
+
+  for (const [dateKey, entries] of Object.entries(captures)) {
+    // Don't clear today's data
+    if (dateKey === todayKey) continue;
+    for (const entry of entries) {
+      if (entry.tags && entry.tags.length > 0) {
+        const monthKey = dateKey.substring(0, 7);
+        if (!tagStats[monthKey]) tagStats[monthKey] = {};
+        for (const tag of entry.tags) {
+          if (!tagStats[monthKey][tag]) tagStats[monthKey][tag] = 0;
+          tagStats[monthKey][tag]++;
+        }
+      }
+    }
+    delete captures[dateKey];
+  }
+
+  // Purge tagStats older than 1 month
+  const oneMonthAgo = `${now.getFullYear()}-${String(now.getMonth()).padStart(2, '0')}`;
+  for (const monthKey of Object.keys(tagStats)) {
+    if (monthKey < oneMonthAgo) {
+      delete tagStats[monthKey];
+    }
+  }
+
+  await chrome.storage.local.set({ captures, tagStats, lastClearDate: todayKey });
+}
+
+// --- Clear all data (captures, tagStats, todos) ---
+async function clearAllData() {
+  await chrome.storage.local.remove(['captures', 'tagStats', 'todos']);
+  await chrome.action.setBadgeText({ text: '' });
+  return { success: true };
+}
 
 // --- Handle a new comment capture ---
 async function handleCapture(data) {
@@ -121,16 +214,25 @@ async function handleCapture(data) {
 
 // --- Tag a comment and rewrite files ---
 async function tagComment(commentId, dateKey, tags) {
-  const storage = await chrome.storage.local.get('captures');
+  const storage = await chrome.storage.local.get(['captures', 'tagStats']);
   const captures = storage.captures || {};
+  const tagStats = storage.tagStats || {};
 
   if (!captures[dateKey]) return { success: false, error: 'No captures for this date' };
 
   const entry = captures[dateKey].find(c => c.id === commentId);
   if (!entry) return { success: false, error: 'Comment not found' };
 
+  // Record tag stats for the month
+  const monthKey = dateKey.substring(0, 7); // "2026-06"
+  if (!tagStats[monthKey]) tagStats[monthKey] = {};
+  for (const tag of tags) {
+    if (!tagStats[monthKey][tag]) tagStats[monthKey][tag] = 0;
+    tagStats[monthKey][tag]++;
+  }
+
   entry.tags = tags;
-  await chrome.storage.local.set({ captures });
+  await chrome.storage.local.set({ captures, tagStats });
 
   // Rewrite the daily file (now includes tag lines)
   await writeDailyFile(captures[dateKey], dateKey);
@@ -361,18 +463,63 @@ async function writeCategoryFiles(dateKey, allCaptures) {
     lines.push('---');
     lines.push('');
 
-    mergedEntries.forEach((entry, index) => {
-      lines.push(`## ${index + 1}. [${entry.ticketTitle}](${entry.ticketUrl})`);
+    if (LOGGING_TAG_IDS.has(tagId)) {
+      // Logging category: full detail format + count summary
+      mergedEntries.forEach((entry, index) => {
+        lines.push(`## ${index + 1}. [${entry.ticketTitle}](${entry.ticketUrl})`);
+        lines.push('');
+        lines.push(`**Date:** ${entry.dayStr}`);
+        lines.push(`**Comment Time:** ${entry.time}`);
+        lines.push('');
+        lines.push(`**Comment:**`);
+        lines.push(`> ${entry.plainText.replace(/\n/g, '\n> ')}`);
+        lines.push('');
+        lines.push('---');
+        lines.push('');
+      });
+
+      // Count summary at the end
+      lines.push('## Summary');
       lines.push('');
-      lines.push(`**Date:** ${entry.dayStr}`);
-      lines.push(`**Comment Time:** ${entry.time}`);
+      const byDate = {};
+      mergedEntries.forEach(entry => {
+        if (!byDate[entry.dayStr]) byDate[entry.dayStr] = 0;
+        byDate[entry.dayStr]++;
+      });
+      let monthTotal = 0;
+      for (const [date, count] of Object.entries(byDate)) {
+        lines.push(`- **${date}:** ${count}`);
+        monthTotal += count;
+      }
       lines.push('');
-      lines.push(`**Comment:**`);
-      lines.push(`> ${entry.plainText.replace(/\n/g, '\n> ')}`);
+      lines.push(`**Monthly Total: ${monthTotal}**`);
       lines.push('');
+    } else {
+      // Tracking category: ticket IDs with hyperlinks grouped by date + counts
+      const byDate = {};
+      mergedEntries.forEach(entry => {
+        if (!byDate[entry.dayStr]) byDate[entry.dayStr] = [];
+        // Extract ticket number like #13089703 from title
+        const ticketMatch = entry.ticketTitle.match(/#(\d+)/);
+        const ticketId = ticketMatch ? `#${ticketMatch[1]}` : entry.ticketTitle;
+        byDate[entry.dayStr].push({ ticketId, url: entry.ticketUrl });
+      });
+      let monthTotal = 0;
+      for (const [date, tickets] of Object.entries(byDate)) {
+        lines.push(`### ${date}`);
+        tickets.forEach(t => {
+          lines.push(`- [${t.ticketId}](${t.url})`);
+        });
+        lines.push('');
+        lines.push(`**Count: ${tickets.length}**`);
+        lines.push('');
+        monthTotal += tickets.length;
+      }
       lines.push('---');
       lines.push('');
-    });
+      lines.push(`**Monthly Total: ${monthTotal}**`);
+      lines.push('');
+    }
 
     const content = lines.join('\r\n');
     await writeToNativeHost(filePath, content);
