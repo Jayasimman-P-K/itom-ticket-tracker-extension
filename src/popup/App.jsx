@@ -17,6 +17,7 @@ function App() {
   const [customTags, setCustomTags] = useState([]);
   const [showAddTag, setShowAddTag] = useState(null); // category id or null
   const [tagStats, setTagStats] = useState({});
+  const [activityStats, setActivityStats] = useState({});
 
   useEffect(() => {
     chrome.runtime.sendMessage({ type: 'GET_CAPTURES' }, (data) => {
@@ -42,6 +43,9 @@ function App() {
     chrome.runtime.sendMessage({ type: 'GET_TAG_STATS' }, (data) => {
       if (data) setTagStats(data);
     });
+    chrome.runtime.sendMessage({ type: 'GET_ACTIVITY_STATS' }, (data) => {
+      if (data) setActivityStats(data);
+    });
 
     // Live update when storage changes (new comment captured)
     const onStorageChange = (changes) => {
@@ -51,6 +55,12 @@ function App() {
         const now = new Date();
         const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
         setCaptures(allData[todayKey] || []);
+      }
+      if (changes.activityStats) {
+        setActivityStats(changes.activityStats.newValue || {});
+      }
+      if (changes.tagStats) {
+        setTagStats(changes.tagStats.newValue || {});
       }
     };
     chrome.storage.onChanged.addListener(onStorageChange);
@@ -214,12 +224,15 @@ function App() {
       const d = new Date(now);
       d.setDate(d.getDate() - i);
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-      // Use live captures for today, allCaptures for past days
-      const dayCaptures = key === todayKey ? captures : (allCaptures[key] || []);
+      const monthKey = key.substring(0, 7);
+      const persistedCount = activityStats[monthKey]?.[key] || 0;
+      // Prefer persisted history for past days, keep today's live captures reactive.
+      const liveCount = key === todayKey ? captures.length : (allCaptures[key] || []).length;
+      const value = key === todayKey ? Math.max(persistedCount, liveCount) : Math.max(persistedCount, liveCount);
       points.push({
         date: d,
         label: d.toLocaleDateString('en-IN', { weekday: 'short' }),
-        value: dayCaptures.length
+        value
       });
     }
     return points;

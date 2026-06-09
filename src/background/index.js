@@ -119,6 +119,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     chrome.storage.local.get('tagStats').then(s => sendResponse(s.tagStats || {}));
     return true;
   }
+
+  if (message.type === 'GET_ACTIVITY_STATS') {
+    chrome.storage.local.get('activityStats').then(s => sendResponse(s.activityStats || {}));
+    return true;
+  }
 });
 
 // --- Scheduled clear: check if it's time to purge captures ---
@@ -145,23 +150,13 @@ async function checkScheduledClear() {
 
   if (!shouldClear) return;
 
-  // Preserve tag stats before clearing
+  // Clear old captures while keeping persisted stats
   const captures = storage.captures || {};
   const tagStats = storage.tagStats || {};
 
   for (const [dateKey, entries] of Object.entries(captures)) {
     // Don't clear today's data
     if (dateKey === todayKey) continue;
-    for (const entry of entries) {
-      if (entry.tags && entry.tags.length > 0) {
-        const monthKey = dateKey.substring(0, 7);
-        if (!tagStats[monthKey]) tagStats[monthKey] = {};
-        for (const tag of entry.tags) {
-          if (!tagStats[monthKey][tag]) tagStats[monthKey][tag] = 0;
-          tagStats[monthKey][tag]++;
-        }
-      }
-    }
     delete captures[dateKey];
   }
 
@@ -178,7 +173,7 @@ async function checkScheduledClear() {
 
 // --- Clear all data (captures, tagStats, todos) ---
 async function clearAllData() {
-  await chrome.storage.local.remove(['captures', 'tagStats', 'todos']);
+  await chrome.storage.local.remove(['captures', 'tagStats', 'activityStats', 'todos']);
   await chrome.action.setBadgeText({ text: '' });
   return { success: true };
 }
@@ -186,8 +181,9 @@ async function clearAllData() {
 // --- Handle a new comment capture ---
 async function handleCapture(data) {
   const today = getDateKey();
-  const storage = await chrome.storage.local.get('captures');
+  const storage = await chrome.storage.local.get(['captures', 'activityStats']);
   const captures = storage.captures || {};
+  const activityStats = storage.activityStats || {};
 
   if (!captures[today]) {
     captures[today] = [];
@@ -201,7 +197,13 @@ async function handleCapture(data) {
   data.tags = data.tags || [];
 
   captures[today].push(data);
-  await chrome.storage.local.set({ captures });
+
+  // Persist activity history counts by day (survives capture cleanup)
+  const monthKey = today.substring(0, 7);
+  if (!activityStats[monthKey]) activityStats[monthKey] = {};
+  activityStats[monthKey][today] = (activityStats[monthKey][today] || 0) + 1;
+
+  await chrome.storage.local.set({ captures, activityStats });
 
   // Update badge with today's count
   const count = captures[today].length;
@@ -245,13 +247,23 @@ async function tagComment(commentId, dateKey, tags) {
 
 // --- Delete a single capture ---
 async function deleteCapture(commentId, dateKey) {
-  const storage = await chrome.storage.local.get('captures');
+  const storage = await chrome.storage.local.get(['captures', 'activityStats']);
   const captures = storage.captures || {};
+  const activityStats = storage.activityStats || {};
 
   if (!captures[dateKey]) return { success: false, error: 'No captures for this date' };
 
+  const prevLen = captures[dateKey].length;
   captures[dateKey] = captures[dateKey].filter(c => c.id !== commentId);
-  await chrome.storage.local.set({ captures });
+  const removed = prevLen - captures[dateKey].length;
+
+  if (removed > 0) {
+    const monthKey = dateKey.substring(0, 7);
+    if (!activityStats[monthKey]) activityStats[monthKey] = {};
+    activityStats[monthKey][dateKey] = Math.max(0, (activityStats[monthKey][dateKey] || 0) - removed);
+  }
+
+  await chrome.storage.local.set({ captures, activityStats });
 
   // Update badge
   const count = captures[dateKey].length;
@@ -553,6 +565,35 @@ function readFromNativeHost(filePath) {
 function parseCategoryFile(content) {
   if (!content) return [];
   const entries = [];
+
+  // Tracking format parser:
+  // ### 8 June 2026
+  // - [#13089703](https://...)
+  // **Count: 1**
+  const daySections = content.split(/^###\s+/m).slice(1);
+  for (const sec of daySections) {
+    const lines = sec.split('\n');
+    const dateStr = (lines[0] || '').trim();
+    const linkMatches = sec.match(/-\s+\[([^\]]+)\]\(([^)]+)\)/g) || [];
+    for (const line of linkMatches) {
+      const m = line.match(/-\s+\[([^\]]+)\]\(([^)]+)\)/);
+      if (!m) continue;
+      const ticketTitle = m[1];
+      const url = m[2];
+      entries.push({
+        ticketTitle,
+        url,
+        dateStr,
+        timeStr: '',
+        comment: '',
+        dedupKey: `${ticketTitle}_${url}_${dateStr}`
+      });
+    }
+  }
+
+  // If tracking parser found entries, return them.
+  if (entries.length > 0) return entries;
+
   // Split by ## headings (each entry starts with ## N. [Title](url))
   const sections = content.split(/^## \d+\./m).slice(1);
 
@@ -709,10 +750,17 @@ async function getTodayCaptures() {
 
 async function clearToday() {
   const today = getDateKey();
-  const storage = await chrome.storage.local.get('captures');
+  const storage = await chrome.storage.local.get(['captures', 'activityStats']);
   const captures = storage.captures || {};
+  const activityStats = storage.activityStats || {};
   delete captures[today];
-  await chrome.storage.local.set({ captures });
+
+  const monthKey = today.substring(0, 7);
+  if (activityStats[monthKey] && activityStats[monthKey][today] !== undefined) {
+    activityStats[monthKey][today] = 0;
+  }
+
+  await chrome.storage.local.set({ captures, activityStats });
   await chrome.action.setBadgeText({ text: '' });
   return { success: true };
 }
