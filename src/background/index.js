@@ -161,7 +161,17 @@ async function checkScheduledClear() {
   }
 
   // Purge tagStats older than 1 month
-  const oneMonthAgo = `${now.getFullYear()}-${String(now.getMonth()).padStart(2, '0')}`;
+  // const oneMonthAgo = `${now.getFullYear()}-${String(now.getMonth()).padStart(2, '0')}`;
+  // for (const monthKey of Object.keys(tagStats)) {
+  //   if (monthKey < oneMonthAgo) {
+  //     delete tagStats[monthKey];
+  //   }
+  // }
+
+  // Purge tagStats older than 1 month
+  const cutoffYear = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
+  const cutoffMonth = now.getMonth() === 0 ? 12 : now.getMonth(); // getMonth()+1 is current, so getMonth() is last month
+  const oneMonthAgo = `${cutoffYear}-${String(cutoffMonth).padStart(2, '0')}`;
   for (const monthKey of Object.keys(tagStats)) {
     if (monthKey < oneMonthAgo) {
       delete tagStats[monthKey];
