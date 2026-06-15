@@ -437,20 +437,13 @@ async function writeCategoryFiles(dateKey, allCaptures) {
     }
   }
 
-  // Write one file per tag (merging with existing disk data)
+  // Write one file per tag — storage is the single source of truth
   for (const [tagId, tagEntries] of Object.entries(tagGroups)) {
     const label = tagLabel(tagId);
     const filePath = buildCategoryFilePath(dateKey, savePath, tagId);
 
-    // Read existing file from disk to preserve entries from cleared days
-    const existingContent = await readFromNativeHost(filePath);
-    const existingEntries = parseCategoryFile(existingContent);
-
-    // Build dedup keys for current storage entries
-    const storageKeys = new Set();
+    // Build entries directly from storage (no disk merge — avoids duplication on re-tagging)
     const mergedEntries = [];
-
-    // Add all entries from current storage (these are the "source of truth" for active data)
     tagEntries.forEach(entry => {
       const entryDate = new Date(entry.dateKey + 'T00:00:00');
       const dayStr = entryDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' });
@@ -458,24 +451,8 @@ async function writeCategoryFiles(dateKey, allCaptures) {
       const plainText = cleanComment(stripHtml(entry.content));
       const ticketUrl = entry.url || '';
       const ticketTitle = entry.ticketTitle || 'Ticket';
-      const dedupKey = `${entry.ticketId}_${ticketUrl}_${time}`;
-
-      storageKeys.add(dedupKey);
       mergedEntries.push({ ticketTitle, ticketUrl, dayStr, time, plainText });
     });
-
-    // Add entries from disk that are NOT already in storage (i.e. from cleared days)
-    for (const existing of existingEntries) {
-      if (!storageKeys.has(existing.dedupKey)) {
-        mergedEntries.push({
-          ticketTitle: existing.ticketTitle,
-          ticketUrl: existing.url || '',
-          dayStr: existing.dateStr,
-          time: existing.timeStr,
-          plainText: existing.comment
-        });
-      }
-    }
 
     // Write merged result
     const lines = [];
